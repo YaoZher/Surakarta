@@ -1,0 +1,883 @@
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -32,3 +32,7 @@
+         run: python -B .github/scripts/smoke_check.py --with-ui
+       - name: Check network rooms, reconnect and desktop integration
+         run: python -B -m unittest discover -s tests -v
++      - name: Check Arabic language rendering and switching
++        env:
++          SURAKARTA_LANGUAGE: ar
++        run: python -B -m unittest discover -s tests -p test_i18n.py -v
+--- a/Class/Assembly/MyMenu.py
++++ b/Class/Assembly/MyMenu.py
+@@ -2,7 +2,7 @@
+ import pygame
+ from pygame import Color, Surface, Rect
+ 
+-from Class import Theme
++from Class import Theme, I18n
+ from Class.Element.Button import Button
+ from Class.Element.TextBox import TextBox
+ 
+@@ -61,6 +61,12 @@
+                 Theme.SEPARATOR, self.bgcolor, Theme.PRIMARY_SOFT, 1,
+             )
+         )
++        self.language_button = Button(
++            TextBox(548, 600, self.left + 16, self.right - 16, 'العربية', Theme.FONT_REGULAR, 19,
++                    Theme.PRIMARY, Theme.PRIMARY_SOFT),
++            Theme.SEPARATOR, self.bgcolor, Theme.PRIMARY_SOFT, 1,
++        )
++        self.buttons.append(self.language_button)
+ 
+     def draw(self, screen: Surface):
+         '''
+@@ -68,6 +74,7 @@
+             screen：窗口
+         '''
+ 
++        self.language_button.textbox.content = '中文' if I18n.is_rtl() else 'العربية'
+         pygame.draw.rect(screen, self.bgcolor, self.rect)
+         pygame.draw.line(screen, Theme.SEPARATOR, self.rect.topleft, self.rect.bottomleft)
+         self.title.draw(screen)
+--- a/Class/Element/Button.py
++++ b/Class/Element/Button.py
+@@ -35,8 +35,7 @@
+ 
+         self.textbox.bgcolor = self.button_bgcolor
+         self.textbox.ftcolor = self.button_textcolor
+-        self.textbox.text = self.textbox.text_font.render(self.textbox.content, True, self.textbox.ftcolor)
+-        self.textbox._position_text()
++        self.textbox.refresh_text()
+ 
+     def disabled(self):
+         '''
+@@ -45,8 +44,7 @@
+ 
+         self.textbox.bgcolor = Theme.DISABLED_FILL
+         self.textbox.ftcolor = Theme.DISABLED_TEXT
+-        self.textbox.text = self.textbox.text_font.render(self.textbox.content, True, self.textbox.ftcolor)
+-        self.textbox._position_text()
++        self.textbox.refresh_text()
+ 
+     def activate(self):
+         '''
+--- a/Class/Element/NetworkPanel.py
++++ b/Class/Element/NetworkPanel.py
+@@ -7,7 +7,7 @@
+ 
+ import pygame
+ 
+-from Class import Theme
++from Class import Theme, I18n
+ 
+ 
+ class NetworkPanel:
+@@ -25,7 +25,7 @@
+         self.mode = "host"
+         self.message = ""
+         self.room = self.color = self.status = self.address = ""
+-        self.values = {"name": "玩家", "port": "8765", "lan_address": "127.0.0.1:8765",
++        self.values = {"name": I18n.translate("玩家"), "port": "8765", "lan_address": "127.0.0.1:8765",
+                        "online_address": "", "room": ""}
+         self.focus: str | None = None
+         self.cursor = 0
+@@ -57,8 +57,21 @@
+             "copy_room": pygame.Rect(930, 186, 188, 40),
+             "copy_address": pygame.Rect(982, 294, 136, 44),
+         }
++        self._layout_language = 'zh'
++        self._sync_layout()
++
++    def _sync_layout(self):
++        if self._layout_language == I18n.language():
++            return
++        for rect in [self.close_rect, *self.tab_rects.values(), *self.field_rects.values(), *self.action_rects.values()]:
++            rect.left = self.card.left + self.card.right - rect.right
++        self._layout_language = I18n.language()
++
++    def _rect(self, rect):
++        return I18n.mirror_rect(rect, self.card)
+ 
+     def open(self, active=False, room="", color="", status="", address="") -> None:
++        self._sync_layout()
+         self.visible = True
+         self.hovered = None
+         self.message = ""
+@@ -130,6 +143,7 @@
+         return None
+ 
+     def handle_event(self, event) -> dict | None:
++        self._sync_layout()
+         if not self.visible:
+             return None
+         if event.type == pygame.KEYDOWN:
+@@ -208,7 +222,10 @@
+             elif key == pygame.K_END or (self.select_all and key == pygame.K_RIGHT):
+                 self.cursor = len(value)
+             else:
+-                self.cursor = max(0, min(len(value), self.cursor + (-1 if key == pygame.K_LEFT else 1)))
++                direction = -1 if key == pygame.K_LEFT else 1
++                if field == 'name' and I18n.is_rtl() and I18n.contains_arabic(value):
++                    direction = -direction
++                self.cursor = max(0, min(len(value), self.cursor + direction))
+             self.select_all = False
+         elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+             if self.mode == "online":
+@@ -334,6 +351,7 @@
+     def draw(self, screen) -> None:
+         if not self.visible:
+             return
++        self._sync_layout()
+         scrim = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+         scrim.fill((20, 22, 28, 122))
+         screen.blit(scrim, (0, 0))
+@@ -370,7 +388,7 @@
+             instructions = (("请向建房的朋友索取地址与房间码。", "双方需连接同一个 Wi-Fi 或局域网。") if self.mode == "join_lan" else
+                             ("双方填写同一个可用的房间服务地址，可跨网络对局。", "先创建房间并分享房间码，另一位玩家再填写房间码加入。"))
+         helper = pygame.Rect(282, 389, 836, 76)
+-        pygame.draw.rect(screen, Theme.SURFACE_ALT, helper, border_radius=8)
++        pygame.draw.rect(screen, Theme.SURFACE_ALT, self._rect(helper), border_radius=8)
+         for index, text in enumerate(instructions):
+             self._text(screen, text, (298, 402 + index * 27), 14, color=Theme.TEXT_SECONDARY)
+         self._text(screen, "建房者执黑先行，加入者执红；双方准备后开始。", (282, 589), 13, color=Theme.TEXT_SECONDARY, max_width=405)
+@@ -381,18 +399,18 @@
+             self._button(screen, self.action_rects[self.mode], "创建房间" if self.mode == "host" else "加入房间", self.mode, primary=True)
+ 
+     def _draw_session(self, screen) -> None:
+-        pygame.draw.rect(screen, Theme.PRIMARY_SOFT, pygame.Rect(282, 150, 836, 104), border_radius=8)
++        pygame.draw.rect(screen, Theme.PRIMARY_SOFT, self._rect(pygame.Rect(282, 150, 836, 104)), border_radius=8)
+         self._text(screen, "房间码", (300, 165), 14, color=Theme.TEXT_SECONDARY)
+         self._text(screen, self.room or "正在获取…", (300, 191), 28, bold=True, max_width=330)
+         seat = {"black": "黑方 · 先手", "red": "红方 · 后手"}.get(self.color, "正在分配座位")
+         self._text(screen, seat, (668, 182), 18, bold=True, max_width=240)
+-        self._text(screen, self.values["name"], (668, 214), 14, color=Theme.TEXT_SECONDARY, max_width=240)
++        self._text(screen, self.values["name"], (668, 214), 14, color=Theme.TEXT_SECONDARY, max_width=240, localize=False)
+         self._button(screen, self.action_rects["copy_room"], "复制房间码", "copy_room")
+         self._text(screen, "连接地址", (282, 267), 15, bold=True)
+-        pygame.draw.rect(screen, Theme.SURFACE_ALT, pygame.Rect(282, 294, 684, 44), border_radius=8)
++        pygame.draw.rect(screen, Theme.SURFACE_ALT, self._rect(pygame.Rect(282, 294, 684, 44)), border_radius=8)
+         self._text(screen, self.address or "正在连接…", (296, 306), 15, max_width=655)
+         self._button(screen, self.action_rects["copy_address"], "复制地址", "copy_address")
+-        pygame.draw.rect(screen, Theme.SURFACE_ALT, pygame.Rect(282, 363, 836, 82), border_radius=8)
++        pygame.draw.rect(screen, Theme.SURFACE_ALT, self._rect(pygame.Rect(282, 363, 836, 82)), border_radius=8)
+         label = self.STATUS_LABELS.get(self.status, self.status or "正在连接…")
+         self._text(screen, label, (300, 378), 19, bold=True, max_width=800)
+         self._text(screen, "双方准备后即可开始；掉线时暂停行棋，恢复连接后再继续。", (300, 414), 14,
+@@ -409,22 +427,25 @@
+             self._fonts[key] = pygame.font.Font(str(path), size)
+         return self._fonts[key]
+ 
+-    def _text(self, screen, content, position, size, color=None, *, bold=False, center=False, max_width=None):
+-        font = self._font(size, bold)
+-        content = str(content)
+-        if max_width is not None and font.size(content)[0] > max_width:
+-            while content and font.size(content + "…")[0] > max_width:
+-                content = content[:-1]
+-            content += "…"
+-        surface = font.render(content, True, color or Theme.TEXT_PRIMARY)
+-        rect = surface.get_rect(center=position) if center else surface.get_rect(topleft=position)
++    def _text(self, screen, content, position, size, color=None, *, bold=False, center=False, max_width=None, localize=True):
++        fallback = Theme.FONT_BOLD if bold else Theme.FONT_REGULAR
++        if max_width is None and not center:
++            max_width = max(24, self.card.right - 32 - position[0])
++        surface = I18n.render_text(str(content), fallback, size, color or Theme.TEXT_PRIMARY,
++                                   localize=localize, max_width=max_width, cache=self._fonts)
++        if not center:
++            position = I18n.mirrored_anchor(position, self.card)
++        rect = (surface.get_rect(center=position) if center else
++                surface.get_rect(topright=position) if I18n.is_rtl() else surface.get_rect(topleft=position))
+         screen.blit(surface, rect)
+ 
+     def _wrapped(self, screen, content, rect, size, color):
+-        font = self._font(size)
++        content = I18n.translate(str(content))
+         lines, current = [], ""
+-        for char in str(content)[:1500]:
+-            if char == "\n" or font.size(current + char)[0] > rect.width:
++        for char in content[:1500]:
++            measured = I18n.render_text(current + char, Theme.FONT_REGULAR, size, color,
++                                        localize=False, cache=self._fonts).get_width()
++            if char == "\n" or measured > rect.width:
+                 lines.append(current)
+                 current = "" if char == "\n" else char
+             else:
+@@ -451,7 +472,7 @@
+             fill, color, border = Theme.DANGER_SOFT, Theme.DANGER, Theme.DANGER_SOFT
+         pygame.draw.rect(screen, fill, rect, border_radius=8)
+         pygame.draw.rect(screen, border, rect, 1, border_radius=8)
+-        self._text(screen, label, rect.center, 16, color, bold=primary or selected, center=True)
++        self._text(screen, label, rect.center, 16, color, bold=primary or selected, center=True, max_width=rect.width-16)
+ 
+     def _field(self, screen, key, placeholder):
+         rect = self.field_rects[key]
+@@ -461,23 +482,29 @@
+         inner = rect.inflate(-24, -12)
+         prior_clip = screen.get_clip()
+         screen.set_clip(inner)
+-        font = self._font(17)
+         value = self.values[key]
++        def rendered(text, color=Theme.TEXT_PRIMARY, localize=False):
++            return I18n.render_text(text, Theme.FONT_REGULAR, 17, color, localize=localize, cache=self._fonts)
++        visible_value = value[:self.cursor] + self.composition + value[self.cursor:] if active else value
++        rtl_input = key == 'name' and I18n.contains_arabic(visible_value)
+         if not value and not self.composition:
+-            self._text(screen, placeholder, (inner.left, inner.top + 2), 17, Theme.TEXT_TERTIARY)
++            text = rendered(placeholder, Theme.TEXT_TERTIARY, localize=True)
++            anchor = text.get_rect(topright=(inner.right,inner.top+2)) if I18n.is_rtl() else text.get_rect(topleft=(inner.left,inner.top+2))
++            screen.blit(text,anchor)
+         else:
+-            visible_value = value[:self.cursor] + self.composition + value[self.cursor:] if active else value
+-            caret = font.size(value[:self.cursor] + self.composition)[0]
++            text = rendered(visible_value)
++            caret = rendered(value[:self.cursor] + self.composition).get_width()
+             offset = max(0, caret - inner.width + 3) if active else 0
+-            x = inner.left - offset
++            x = inner.right - text.get_width() if rtl_input else inner.left - offset
+             if active and self.select_all:
+-                pygame.draw.rect(screen, Theme.PRIMARY_SOFT, pygame.Rect(x, inner.top, font.size(value)[0], inner.height))
+-            self._text(screen, visible_value, (x, inner.top + 2), 17)
++                pygame.draw.rect(screen, Theme.PRIMARY_SOFT, pygame.Rect(x, inner.top, text.get_width(), inner.height))
++            screen.blit(text,(x,inner.top+2))
+             if active and self.composition:
+-                start_x = x + font.size(value[:self.cursor])[0]
+-                pygame.draw.line(screen, Theme.PRIMARY, (start_x, inner.bottom - 2), (x + caret, inner.bottom - 2))
++                start_x = inner.right - rendered(value[:self.cursor]).get_width() if rtl_input else x + rendered(value[:self.cursor]).get_width()
++                end_x = inner.right - caret if rtl_input else x + caret
++                pygame.draw.line(screen, Theme.PRIMARY, (start_x, inner.bottom - 2), (end_x, inner.bottom - 2))
+         if active and not self.select_all and pygame.time.get_ticks() % 1000 < 600:
+-            caret_width = font.size(value[:self.cursor] + self.composition)[0]
+-            caret_x = inner.left + min(caret_width, inner.width - 3)
++            caret_width = rendered(value[:self.cursor] + self.composition).get_width()
++            caret_x = inner.right - min(caret_width, inner.width-3) if rtl_input else inner.left + min(caret_width, inner.width - 3)
+             pygame.draw.line(screen, Theme.PRIMARY, (caret_x, inner.top + 3), (caret_x, inner.bottom - 3), 1)
+         screen.set_clip(prior_clip)
+--- a/Class/Element/SettingsPanel.py
++++ b/Class/Element/SettingsPanel.py
+@@ -5,7 +5,7 @@
+ import pygame
+ from pygame import Rect, Surface
+ 
+-from Class import Theme
++from Class import Theme, I18n
+ from Class.Settings import (
+     AISettings,
+     CLOCK_OPTIONS_MS,
+@@ -40,6 +40,18 @@
+             profile: Rect(self.card.left + 200 + index * 112, self.card.top + 438, 104, 42)
+             for index, profile in enumerate(PROFILE_OPTIONS)
+         }
++        self._fonts = {}
++        self._layout_language = 'zh'
++        self._sync_layout()
++
++    def _sync_layout(self):
++        if self._layout_language == I18n.language():
++            return
++        names = ('close_rect', 'apply_rect', 'cancel_rect', 'depth_minus', 'depth_plus',
++                 'time_minus', 'time_plus', 'clock_minus', 'clock_plus')
++        for rect in [*(getattr(self, name) for name in names), *self.clock_rects.values(), *self.profile_rects.values()]:
++            rect.left = self.card.left + self.card.right - rect.right
++        self._layout_language = I18n.language()
+ 
+     def open(self, settings: AISettings) -> None:
+         self.settings = settings.normalized()
+@@ -51,6 +63,7 @@
+         self.hovered = None
+ 
+     def handle_event(self, event: pygame.event.Event) -> str | None:
++        self._sync_layout()
+         if not self.visible:
+             return None
+         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+@@ -92,6 +105,7 @@
+     def draw(self, screen: Surface) -> None:
+         if not self.visible:
+             return
++        self._sync_layout()
+         scrim = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+         scrim.fill((20, 22, 28, 122))
+         screen.blit(scrim, (0, 0))
+@@ -135,7 +149,8 @@
+ 
+     def _stepper(self, screen: Surface, minus: Rect, plus: Rect, value: str, minus_key: str, plus_key: str) -> None:
+         self._button(screen, minus, "-", minus_key, compact=True)
+-        value_rect = Rect(minus.right + 8, minus.top, plus.left - minus.right - 16, minus.height)
++        left, right = sorted((minus, plus), key=lambda rect: rect.left)
++        value_rect = Rect(left.right + 8, left.top, right.left - left.right - 16, left.height)
+         pygame.draw.rect(screen, Theme.SURFACE_ALT, value_rect, border_radius=Theme.CORNER_RADIUS)
+         pygame.draw.rect(screen, Theme.SEPARATOR, value_rect, 1, border_radius=Theme.CORNER_RADIUS)
+         self._text(screen, value, value_rect.center, 16, Theme.TEXT_PRIMARY, bold=True, center=True)
+@@ -202,10 +217,12 @@
+             return f"{value // 1_000}s"
+         return f"{value}ms"
+ 
+-    @staticmethod
+-    def _text(screen: Surface, content: str, position: tuple[int, int], size: int, color: tuple[int, ...], *, bold: bool = False, center: bool = False) -> None:
++    def _text(self, screen: Surface, content: str, position: tuple[int, int], size: int, color: tuple[int, ...], *, bold: bool = False, center: bool = False) -> None:
+         font_path = Theme.FONT_BOLD if bold else Theme.FONT_REGULAR
+-        font = pygame.font.Font(font_path, size)
+-        text = font.render(content, True, color)
+-        rect = text.get_rect(center=position) if center else text.get_rect(topleft=position)
++        limit = 330 if not center and position[1] >= self.card.top + 100 else self.card.width - 80
++        text = I18n.render_text(content, font_path, size, color, max_width=limit, cache=self._fonts)
++        if not center:
++            position = I18n.mirrored_anchor(position, self.card)
++        rect = (text.get_rect(center=position) if center else
++                text.get_rect(topright=position) if I18n.is_rtl() else text.get_rect(topleft=position))
+         screen.blit(text, rect)
+--- a/Class/Element/TextBox.py
++++ b/Class/Element/TextBox.py
+@@ -1,6 +1,7 @@
+ #导入pygame库
+ import pygame
+ from pygame import Color, Surface, Rect
++from Class import I18n
+ 
+ # 文本框类
+ class TextBox:
+@@ -34,13 +35,25 @@
+         self.width = right - left  # 文本框界面宽度
+         self.height = down - up  # 文本框界面宽度
+         self.rect = Rect(left, up, self.width, self.height)
+-        self.text_font = pygame.font.Font(self.ftname, self.ftsize)  # 字体
+-        self.text = self.text_font.render(self.content, True, self.ftcolor)  # 文本
++        self._fonts = {}
++        self._render_signature = None
++        self.refresh_text()
++
++    def refresh_text(self, force=False):
++        signature = (I18n.language(), self.content, tuple(self.ftcolor), self.ftsize)
++        if not force and signature == self._render_signature:
++            return
++        self.rendered_content = I18n.translate(self.content)
++        self.text = I18n.render_text(self.content, self.ftname, self.ftsize, self.ftcolor,
++                                    max_width=max(1, self.width - 12), max_height=max(1, self.height - 4), cache=self._fonts)
++        self._render_signature = signature
+         self._position_text()
+ 
+     def _position_text(self):
+         if self.is_center:
+             self.text_rect = self.text.get_rect(center=(self.left + self.width // 2, self.up + self.height // 2))
++        elif I18n.is_rtl() and I18n.contains_arabic(self.rendered_content):
++            self.text_rect = self.text.get_rect(midright=(self.right - 6, self.up + self.height // 2))
+         else:
+             self.text_rect = self.text.get_rect(midleft=(self.left + 10, self.up + self.height // 2))
+ 
+@@ -54,6 +67,7 @@
+         self.draw_text(screen)
+ 
+     def draw_text(self, screen: Surface):
++        self.refresh_text()
+         screen.blit(self.text, self.text_rect)
+ 
+     def clear(self, screen:Surface):
+@@ -72,6 +86,5 @@
+         '''
+ 
+         self.content = new_content  # 更新文本内容
+-        self.text = self.text_font.render(self.content, True, self.ftcolor)
+-        self._position_text()
++        self.refresh_text()
+         self.draw(screen)
+--- a/Class/GameManager.py
++++ b/Class/GameManager.py
+@@ -7,7 +7,7 @@
+ from pygame import Color, freetype
+ from pygame.locals import QUIT, KEYDOWN, MOUSEBUTTONDOWN, MOUSEMOTION  # 导入常用关键字常量
+ 
+-from Class import Theme
++from Class import Theme, I18n
+ from Class.Globals import Globals
+ from Class.Settings import AISettings
+ from Class.MatchRecord import GameRecorder, load_match_info
+@@ -38,7 +38,7 @@
+         self.width = 1400  # 窗口宽度
+         self.height = 700  # 窗口高度
+         self.screen = pygame.display.set_mode((self.width, self.height))  # 获取对显示系统的访问，并创建一个窗口screen，大小为1400*700
+-        pygame.display.set_caption("Surakarta AI")
++        pygame.display.set_caption('سوراكارتا' if I18n.is_rtl() else 'Surakarta AI')
+         self.screen_color = Theme.APP_BG
+         self.screen.fill(self.screen_color)  # 填充画布颜色
+         self.chess_board = ChessBoard(0, self.height, 0, self.height)  # 棋盘（位于界面左侧的边长为700的正方形区域内）
+@@ -165,12 +165,34 @@
+         self.menu.draw(self.screen)
+         self.settings_panel.draw(self.screen)
+ 
++    def toggle_language(self):
++        """Refresh labels in place without resetting a local or online match."""
++        warning = ''
++        try:
++            I18n.set_language('zh' if I18n.is_rtl() else 'ar', persist=True)
++        except OSError:
++            warning = '语言设置未保存，下次启动需重选'
++        pygame.display.set_caption('سوراكارتا' if I18n.is_rtl() else 'Surakarta AI')
++        self.network.redraw()
++        self.settings_panel.draw(self.screen)
++        self.network.panel.draw(self.screen)
++        if warning:
++            self.user_panel.updateState(self.screen, warning)
++        pygame.display.update()
++
+     def check_event(self):
+         '''
+             获取事件并响应
+         '''
+ 
+         for event in pygame.event.get():
++            language_key = event.type == KEYDOWN and getattr(event, 'key', None) == pygame.K_F2
++            language_click = (event.type == MOUSEBUTTONDOWN and getattr(event, 'button', 1) == 1
++                              and not self.settings_panel.visible and not self.network.panel.visible
++                              and self.menu.language_button.rect.collidepoint(event.pos))
++            if language_key or language_click:
++                self.toggle_language()
++                continue
+             # 如果鼠标点击右上角关闭按钮，则关闭，退出程序
+             if event.type is QUIT:
+                 self._save_record("exit")
+--- a/Class/I18n.py
++++ b/Class/I18n.py
+@@ -0,0 +1,156 @@
++"""Chinese/Arabic presentation only: keep game state, protocol and records unchanged."""
++from __future__ import annotations
++
++import json
++import os
++from pathlib import Path
++import re
++
++import pygame
++import arabic_reshaper
++from bidi.algorithm import get_display
++
++ROOT = Path(__file__).resolve().parents[1]
++LANGUAGE_PATH = ROOT / 'output' / 'language.json'
++ARABIC_FONT = ROOT / 'Resource' / 'NotoSansArabic.ttf'
++SUPPORTED = ('zh', 'ar')
++CATALOG = json.loads((Path(__file__).parent / 'locales' / 'ar.json').read_text(encoding='utf-8'))
++_arabic = re.compile(r'[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]')
++_cjk = re.compile(r'[\u3400-\u9fff]')
++
++def _load_language() -> str:
++    requested = os.getenv('SURAKARTA_LANGUAGE')
++    if requested is None:
++        try:
++            payload = json.loads(LANGUAGE_PATH.read_text(encoding='utf-8'))
++            requested = payload.get('language', 'zh') if isinstance(payload, dict) else 'zh'
++        except (OSError, ValueError):
++            requested = 'zh'
++    return requested if requested in SUPPORTED else 'zh'
++
++_language = _load_language()
++
++def language() -> str:
++    return _language
++
++def is_rtl() -> bool:
++    return _language == 'ar'
++
++def contains_arabic(text: str) -> bool:
++    return bool(_arabic.search(str(text)))
++
++def set_language(value: str, *, persist: bool = False, path: Path | None = None) -> None:
++    global _language
++    if value not in SUPPORTED:
++        raise ValueError('Unsupported language: ' + str(value))
++    _language = value
++    if persist:
++        target = LANGUAGE_PATH if path is None else Path(path)
++        target.parent.mkdir(parents=True, exist_ok=True)
++        target.write_text(json.dumps({'language': value}) + '\n', encoding='utf-8')
++
++def translate(content: str) -> str:
++    text = str(content)
++    if not is_rtl():
++        return text
++    if text in CATALOG:
++        return CATALOG[text]
++    if text.startswith('玩家：'):
++        name = text[3:]
++        return 'اللاعب: ' + CATALOG.get(name, name)
++    match = re.fullmatch(r'用时[： ]+(\d+:\d+)', text)
++    if match:
++        return 'الوقت: ' + match[1]
++    if text.startswith('# '):
++        return '# ' + translate(text[2:])
++    match = re.fullmatch(r'(黑方|红方)获胜（(黑方|红方)超时）', text)
++    if match:
++        return f'فاز {CATALOG[match[1]]} (انتهى وقت {CATALOG[match[2]]})'
++    if text.startswith('AI 深度'):
++        return (text.replace('AI 深度', 'عمق ').replace('毫秒', 'ms')
++                .replace('节点', 'عقدة').replace('剩余 ', 'باقي ')
++                .replace('超时判负', 'خسارة بالوقت').replace('已启用兜底', 'نقلة احتياطية'))
++    match = re.fullmatch(r'房间 (.*?) · (黑方|红方) · 不限时', text)
++    if match:
++        return f'غرفة {match[1]} · {CATALOG[match[2]]} · دون توقيت'
++    # Network result text joins a winner and one of the stable reason labels.
++    for winner in ('黑方获胜', '红方获胜', '和棋'):
++        if text.startswith(winner):
++            tail = text[len(winner):]
++            for source, target in sorted(CATALOG.items(), key=lambda item: len(item[0]), reverse=True):
++                if source in tail:
++                    tail = tail.replace(source, target)
++            return CATALOG[winner] + tail
++    return text
++
++def visual_text(content: str, *, localize: bool = True) -> str:
++    logical = translate(content) if localize else str(content)
++    if not contains_arabic(logical):
++        return logical
++    return get_display(arabic_reshaper.reshape(logical), base_dir='R' if is_rtl() else None)
++
++def font_path(text: str, fallback: str | Path) -> str:
++    if contains_arabic(text):
++        if ARABIC_FONT.is_file():
++            return str(ARABIC_FONT)
++        candidate = pygame.font.match_font('arial,dejavusans,tahoma')
++        if candidate:
++            return candidate
++        raise FileNotFoundError('Arabic font missing: Resource/NotoSansArabic.ttf')
++    fallback = Path(fallback)
++    return str(fallback if fallback.is_absolute() else ROOT / fallback)
++
++def _render_visual(visual: str, fallback, size: int, color, cache: dict | None):
++    def font(path):
++        key = (str(path), size)
++        if cache is not None:
++            if key not in cache:
++                cache[key] = pygame.font.Font(str(path), size)
++            return cache[key]
++        return pygame.font.Font(str(path), size)
++    primary = font(font_path(visual, fallback))
++    if contains_arabic(visual) and _cjk.search(visual):
++        # Player names may contain Chinese even in the Arabic UI.
++        groups = re.findall(r'[\u3400-\u9fff]+|[^\u3400-\u9fff]+', visual)
++        fonts = [font(font_path(group, fallback)) if _cjk.search(group) else primary for group in groups]
++        ascent = max(f.get_ascent() for f in fonts)
++        height = ascent + max(-f.get_descent() for f in fonts)
++        surfaces = [f.render(group, True, color) for group, f in zip(groups, fonts)]
++        surface = pygame.Surface((sum(s.get_width() for s in surfaces), height), pygame.SRCALPHA)
++        x = 0
++        for s, f in zip(surfaces, fonts):
++            surface.blit(s, (x, ascent - f.get_ascent())); x += s.get_width()
++    else:
++        surface = primary.render(visual, True, color)
++    bounds = surface.get_bounding_rect()
++    if bounds.width and bounds.height:
++        # Crop vertical font padding, but retain spaces for input caret metrics.
++        surface = surface.subsurface(pygame.Rect(0,bounds.y,surface.get_width(),bounds.height)).copy()
++    return surface
++
++def render_text(content: str, fallback, size: int, color, *, localize=True,
++                max_width=None, max_height=None, cache=None):
++    logical = translate(content) if localize else str(content)
++    point_size = int(size)
++    while True:
++        visual = visual_text(logical, localize=False)
++        surface = _render_visual(visual, fallback, point_size, color, cache)
++        fits = ((max_width is None or surface.get_width() <= max_width) and
++                (max_height is None or surface.get_height() <= max_height))
++        if fits or point_size <= min(11, size):
++            break
++        point_size -= 1
++    if max_width is not None:
++        while logical and surface.get_width() > max_width:
++            logical = logical[:-1]
++            surface = _render_visual(visual_text(logical + '…', localize=False), fallback, point_size, color, cache)
++    return surface
++
++def mirror_rect(rect: pygame.Rect, container: pygame.Rect) -> pygame.Rect:
++    result = rect.copy()
++    if is_rtl():
++        result.left = container.left + container.right - rect.right
++    return result
++
++def mirrored_anchor(position, container):
++    return (container.left + container.right - position[0], position[1]) if is_rtl() else position
+--- a/README.md
++++ b/README.md
+@@ -8,7 +8,19 @@
+ 
+ ## 安装与启动
+ 
+-需要 Python 3.10 或以上；依赖为 `pygame==2.6.1` 和 `websockets==15.0.1`。推荐使用 Python 3.12；Windows 提供启动脚本，其他桌面系统可从项目根目录运行 Python 入口。旧版用户也需重新安装下面的依赖。
++### 中文与阿拉伯语界面
++
++本地扩展版新增中阿切换。点击右侧 `العربية` / `中文` 按钮，或按 **F2**；设置和联网面板打开时也可按 F2。语言偏好单独保存于 `output/language.json`，切换不重开棋局、不改变AI参数、计时、网络连接或棋谱数据。
++
++阿语覆盖主菜单、双方控制面板、状态与计时、AI设置、联网建房/加入/房间面板和连接提示。文字使用字形连接与双向排版，设置及联网表单按RTL调整；棋盘坐标、房间码、IP/URL及导出的原始棋谱保持原顺序。阿语昵称按Unicode保存，文本字段可使用复制粘贴及系统输入法。
++
++Windows 可双击 `run_game_ar.bat` 以阿语启动。也可设置环境变量 `SURAKARTA_LANGUAGE=ar` 或 `zh` 后运行 `main.py`；环境变量优先于保存的语言偏好。
++
++新增依赖 `arabic-reshaper==3.0.1`、`python-bidi==0.6.12`，更新后先重新安装 `requirements.txt`。附带 [Noto Sans Arabic](https://github.com/google/fonts/tree/main/ofl/notosansarabic) 字体和其OFL许可。连接字形与双向算法的用法参考 [Arabic Reshaper](https://pypi.org/project/arabic-reshaper/) 和 [python-bidi](https://pypi.org/project/python-bidi/)。
++
++翻译字典为 `Class/locales/ar.json`，入口为 `Class/I18n.py`；显示层翻译不修改服务器协议。此版新增9项界面回归用例，涵盖字体、切换、RTL控件、昵称及对局状态保存；母语术语润色与实际设备输入法验收可由Nasr继续进行。
++
++需要 Python 3.10 或以上；依赖见 `requirements.txt`，包括Pygame、WebSocket和阿语排版库。推荐使用 Python 3.12；Windows 提供启动脚本，其他桌面系统可从项目根目录运行 Python 入口。旧版用户也需重新安装下面的依赖。
+ 
+ ```sh
+ git clone https://github.com/YaoZher/Surakarta.git
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,2 +1,4 @@
+ pygame==2.6.1
+ websockets==15.0.1
++arabic-reshaper==3.0.1
++python-bidi==0.6.12
+--- a/run_game_ar.bat
++++ b/run_game_ar.bat
+@@ -0,0 +1,6 @@
++@echo off
++setlocal
++cd /d "%~dp0"
++set "SURAKARTA_LANGUAGE=ar"
++call run_game.bat
++endlocal
+--- a/setup_and_run_arabic.bat
++++ b/setup_and_run_arabic.bat
+@@ -0,0 +1,18 @@
++@echo off
++setlocal
++cd /d "%~dp0"
++if not exist ".venv\Scripts\python.exe" (
++    py -3.12 -m venv .venv
++    if errorlevel 1 py -3 -m venv .venv
++    if not exist ".venv\Scripts\python.exe" python -m venv .venv
++)
++if not exist ".venv\Scripts\python.exe" goto failed
++".venv\Scripts\python.exe" -m pip install -r requirements.txt
++if errorlevel 1 goto failed
++set "SURAKARTA_LANGUAGE=ar"
++call run_game.bat
++exit /b %errorlevel%
++:failed
++echo Setup failed. Install Python 3.12, check the network, and try again.
++pause
++exit /b 1
+--- a/tests/test_i18n.py
++++ b/tests/test_i18n.py
+@@ -0,0 +1,159 @@
++"""Arabic rendering and language switching exercise the actual Pygame UI."""
++import json
++import os
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++
++os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
++os.environ.setdefault('SDL_AUDIODRIVER', 'dummy')
++os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
++
++import pygame
++from Class import I18n, Theme
++from Class.Element.TextBox import TextBox
++from Class.Element.NetworkPanel import NetworkPanel
++from Class.Element.SettingsPanel import SettingsPanel
++from Class.Settings import AISettings
++from Class.Globals import Globals
++from Class.GameManager import GameManage
++
++ROOT = Path(__file__).resolve().parents[1]
++
++class ArabicInterfaceTests(unittest.TestCase):
++    def setUp(self):
++        self.previous_language = I18n.language()
++        self.previous_cwd = Path.cwd()
++        os.chdir(ROOT)
++        self.temporary = tempfile.TemporaryDirectory()
++        self.language_path = Path(self.temporary.name) / 'language.json'
++        self.settings_patch = patch.object(I18n, 'LANGUAGE_PATH', self.language_path)
++        self.settings_patch.start()
++        I18n.set_language('ar')
++        pygame.init()
++        self.screen = pygame.display.set_mode((1400,700))
++        self.game = None
++
++    def tearDown(self):
++        if self.game:
++            self.game.network.shutdown()
++        self.settings_patch.stop()
++        self.temporary.cleanup()
++        I18n.set_language(self.previous_language)
++        pygame.quit()
++        os.chdir(self.previous_cwd)
++
++    def test_connected_glyphs_bidi_and_font_coverage(self):
++        logical = 'الإعدادات 123 AB12CD'
++        visual = I18n.visual_text(logical, localize=False)
++        self.assertNotEqual(visual, logical)
++        self.assertIn('AB12CD',visual)
++        self.assertIn('123',visual)
++        font = pygame.font.Font(str(I18n.ARABIC_FONT),20)
++        self.assertTrue(all(metric is not None for metric in font.metrics(visual)))
++
++    def test_persistence_and_invalid_language(self):
++        I18n.set_language('ar',persist=True)
++        self.assertEqual(json.loads(self.language_path.read_text())['language'],'ar')
++        with self.assertRaises(ValueError):
++            I18n.set_language('xx')
++        self.assertEqual(I18n.language(),'ar')
++
++    def test_text_fits_rtl_and_chinese_switch_restores_label(self):
++        box = TextBox(20,54,20,280,'黑方正在思考…',Theme.FONT_REGULAR,20,
++                      Theme.TEXT_PRIMARY,Theme.SURFACE,False)
++        box.draw(self.screen)
++        self.assertEqual(box.rendered_content,'الأسود يفكر…')
++        self.assertTrue(box.rect.contains(box.text_rect))
++        I18n.set_language('zh')
++        box.draw(self.screen)
++        self.assertEqual(box.rendered_content,'黑方正在思考…')
++        self.assertTrue(box.rect.contains(box.text_rect))
++
++    def test_mixed_names_and_dynamic_diagnostics(self):
++        surface = I18n.render_text('玩家：中文Nasr',Theme.FONT_REGULAR,17,Theme.TEXT_PRIMARY)
++        self.assertGreater(surface.get_width(),30)
++        self.assertEqual(I18n.visual_text('B2E-3D',localize=False),'B2E-3D')
++        self.assertIn('02:03',I18n.translate('用时：02:03'))
++        diagnostic = I18n.translate('AI 深度5 | 2031毫秒 | 14,219节点 | 剩余 14:57')
++        self.assertNotIn('毫秒',diagnostic)
++        self.assertIn('14:57',I18n.visual_text(diagnostic,localize=False))
++
++    def test_settings_controls_are_mirrored_and_still_work(self):
++        panel=SettingsPanel(AISettings())
++        panel.open(AISettings())
++        self.assertLess(panel.depth_plus.left,panel.depth_minus.left)
++        before=panel.settings.depth
++        panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN,button=1,pos=panel.depth_plus.center))
++        self.assertGreater(panel.settings.depth,before)
++        panel.draw(self.screen)
++        I18n.set_language('zh')
++        panel.draw(self.screen)
++        self.assertGreater(panel.depth_plus.left,panel.depth_minus.left)
++
++    def test_arabic_nickname_and_ltr_address_are_sent_unchanged(self):
++        panel=NetworkPanel();panel.open()
++        self.assertEqual(panel.values['name'],'لاعب')
++        self.assertGreater(panel.field_rects['name'].left,panel.field_rects['port'].left)
++        panel.values['name']='ناصر 12'
++        panel.cursor=len(panel.values['name'])
++        panel._insert(' أ')
++        panel._key(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_BACKSPACE,mod=0))
++        self.assertEqual(panel.values['name'],'ناصر 12 ')
++        panel.mode='online';panel.values['online_address']='ws://127.0.0.1:8765'
++        panel.values['room']='AB12CD'
++        action=panel._activate('join')
++        self.assertEqual(action['name'],'ناصر 12')
++        self.assertEqual(action['url'],'ws://127.0.0.1:8765')
++        self.assertEqual(action['room'],'AB12CD')
++        panel.draw(self.screen)
++        I18n.set_language('zh')
++        self.assertEqual(NetworkPanel().values['name'],'玩家')
++
++    def test_f2_switch_preserves_game_settings_and_network_object(self):
++        Globals.reset()
++        self.game=GameManage()
++        g=self.game
++        before=(g.ai_settings,g.chess_board,g.chess_manual,g.network,Globals.step)
++        pygame.event.clear()
++        pygame.event.post(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_F2,mod=0))
++        g.check_event()
++        self.assertEqual(I18n.language(),'zh')
++        self.assertEqual(before,(g.ai_settings,g.chess_board,g.chess_manual,g.network,Globals.step))
++        self.assertEqual(json.loads(self.language_path.read_text())['language'],'zh')
++        self.assertEqual(g.menu.language_button.textbox.content,'العربية')
++
++    def test_switch_during_match_keeps_board_history_and_timers(self):
++        import Class.GameManager as manager
++        Globals.reset();self.game=GameManage();g=self.game
++        with patch.object(manager,'RECORDS_DIR',Path(self.temporary.name)/'records'):
++            pygame.event.clear()
++            pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN,button=1,pos=g.menu.buttons[0].rect.center))
++            g.check_event()
++        self.assertTrue(Globals.game_start)
++        before=(g.chess_board.ai_black.to_engine_board(g.chess_board).to_rows(),
++                list(g.chess_manual.record),g.user_panel.control_up.timer.is_stop,
++                g.user_panel.control_up.timer.miliseconds,Globals.is_black)
++        g.toggle_language()
++        after=(g.chess_board.ai_black.to_engine_board(g.chess_board).to_rows(),
++               list(g.chess_manual.record),g.user_panel.control_up.timer.is_stop,
++               g.user_panel.control_up.timer.miliseconds,Globals.is_black)
++        self.assertEqual(before,after)
++        self.assertTrue(Globals.game_start)
++
++    def test_language_button_and_modal_shortcut(self):
++        Globals.reset();self.game=GameManage();g=self.game
++        pygame.event.clear()
++        pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN,button=1,pos=g.menu.language_button.rect.center))
++        g.check_event()
++        self.assertEqual(I18n.language(),'zh')
++        g.settings_panel.open(g.ai_settings)
++        pygame.event.post(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_F2,mod=0))
++        g.check_event()
++        self.assertEqual(I18n.language(),'ar')
++        self.assertTrue(g.settings_panel.visible)
++        self.assertEqual(g.settings_panel.settings,g.ai_settings)
++
++if __name__=='__main__':
++    unittest.main()
+--- a/tests/test_network_panel.py
++++ b/tests/test_network_panel.py
+@@ -31,6 +31,7 @@
+     def setUp(self):
+         self.panel = NetworkPanel()
+         self.panel.open()
++        self.initial_name = self.panel.values['name']
+ 
+     def click(self, rect):
+         return self.panel.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=rect.center))
+@@ -95,7 +96,7 @@
+     def test_chinese_ime_selection_cursor_and_deletion(self):
+         self.key(pygame.K_a, pygame.KMOD_CTRL)
+         self.panel.handle_event(pygame.event.Event(pygame.TEXTEDITING, text="zhong", start=0, length=5))
+-        self.assertEqual(self.panel.values["name"], "玩家")
++        self.assertEqual(self.panel.values["name"], self.initial_name)
+         self.text("中文昵称")
+         self.assertEqual(self.panel.values["name"], "中文昵称")
+         self.key(pygame.K_LEFT)
+@@ -154,7 +155,7 @@
+         self.assertIsNone(self.panel._activate("host"))
+         self.assertIsNone(self.panel._activate("create"))
+         self.text("cannot edit while connected")
+-        self.assertEqual(self.panel.values["name"], "玩家")
++        self.assertEqual(self.panel.values["name"], self.initial_name)
+         self.panel.set_session(room="ABC123", color="black", status="playing")
+         self.assertIsNone(self.click(self.panel.action_rects["ready"]))
+         self.assertEqual(self.click(self.panel.action_rects["resign"]), {"action": "resign"})
+--- a/阿语版使用说明.md
++++ b/阿语版使用说明.md
+@@ -0,0 +1,34 @@
++# 苏拉卡尔塔中文与阿拉伯语界面
++
++这是基于 YaoZher/Surakarta 的 main@4d6f8f6e0dd6e764c6b329458f323e791fad0396 制作的本地扩展，包含完整项目源码、字体和测试；未提交至GitHub远端。
++
++## 启动
++
++Windows 请安装Python 3.12，将整个文件夹解压到可写目录，双击 `setup_and_run_arabic.bat`。脚本在项目内创建 `.venv`、安装 `requirements.txt` 后以阿语启动。
++
++后续直接双击 `run_game_ar.bat`。需要中文时，点击界面右侧 `中文`，或按F2。菜单显示 `العربية` 时点击即可切换到阿语。设置和联网面板打开时同样可按F2。
++
++也可以按项目README的标准虚拟环境流程安装，再运行 `main.py`。环境变量 `SURAKARTA_LANGUAGE=ar` / `zh` 可指定启动语言；未设置时读取 `output/language.json`，首次默认中文。
++
++## 功能
++
++阿语覆盖主菜单、玩家控制、状态与计时、AI设置、联网建房/加入/房间及连接消息。显示层处理连接字形、双向文字、阿语字体及RTL表单；棋盘坐标、IP/URL、房间码及导出棋谱仍使用原有顺序。
++
++切换语言保留棋盘、计时、AI参数和连接对象。翻译词典位于 `Class/locales/ar.json`，包含168条基础文案；动态计时、诊断、胜负消息另在 `Class/I18n.py` 中处理。Nasr可据此继续校对技术术语与界面文案。
++
++## 验证
++
++中文启动和阿语启动均已通过全部64项测试（原55项加9项本地化测试）。基础检查通过，原规则、搜索与策略3项校验值保持一致。实际渲染检查覆盖主界面、设置及联网各面板。
++
++```powershell
++.\.venv\Scripts\python.exe -B .github/scripts/smoke_check.py --with-ui
++.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
++```
++
++测试使用Pygame无窗口显示模式和本机回环联网；母语润色、真实设备输入法、跨电脑联机仍需进一步验收。本地AI原有同步搜索机制保留，语言切换不会使其自动变为后台搜索。
++
++## 依赖与字体
++
++新增 `arabic-reshaper==3.0.1` 与 `python-bidi==0.6.12`，已写入依赖清单。
++
++新增 Noto Sans Arabic 字体来自 [Google Fonts 官方仓库](https://github.com/google/fonts/tree/main/ofl/notosansarabic)，许可文件为 `Resource/NotoSansArabic-OFL.txt`。原中文字体资源继续用于中文和混合昵称。

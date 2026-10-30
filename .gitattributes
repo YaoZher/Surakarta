@@ -1,0 +1,20 @@
+# Keep source and metadata consistent across Windows and Unix checkouts.
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Windows launchers use native line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Font files must never receive text conversion.
+*.ttf binary
+*.ttc binary
+*.otf binary

@@ -1,0 +1,4 @@
+pygame==2.6.1
+websockets==15.0.1
+arabic-reshaper==3.0.1
+python-bidi==0.6.12

@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+Resource
+Class
+Func
+tests
+output
+棋谱
+.env
+.env.*
+*.zip

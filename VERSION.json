@@ -1,0 +1,20 @@
+{
+  "application_version": "2026-10-26-network-preview",
+  "network_protocol": 1,
+  "network_rules": "surakarta-room-v1",
+  "version": "2026-10-24-paper-S5-candidate",
+  "status": "experimental_not_promoted",
+  "default_settings": {
+    "depth": 5,
+    "time_ms": 5000,
+    "total_time_ms": 900000,
+    "eval_profile": "paper_2022"
+  },
+  "paper_opening_ordering": true,
+  "paper_position_blend": 50,
+  "competition_mode": "manual_screen_share",
+  "rules_sha256": "af76cac780de60eec0f94a49c652e16ad7159ebc2bd78e7c889d2c1101aeac2e",
+  "search_sha256": "669f3cdb1e6041c9a0a251e2eaf50315856e2547a473b8c4ae1fd081c192fac0",
+  "strategy_sha256": "b30b5489574b566725fceff9f1781495776f649c01637807a53d8ce7e069a770",
+  "referee_timing_rule": "not_confirmed"
+}

@@ -1,0 +1,38 @@
+name: Project checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check syntax, source checksums, engine and interface
+        run: python -B .github/scripts/smoke_check.py --with-ui
+      - name: Check network rooms, reconnect and desktop integration
+        run: python -B -m unittest discover -s tests -v
+      - name: Check Arabic language rendering and switching
+        env:
+          SURAKARTA_LANGUAGE: ar
+        run: python -B -m unittest discover -s tests -p test_i18n.py -v
